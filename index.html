@@ -132,10 +132,12 @@ function grp(x){return(x==='Chuva'||x==='Garoa')?'Chuva/Garoa':(x==='Nublado'?'N
 
 function status(msg,err){const s=document.getElementById('status');s.className=err?'err':'';s.innerHTML=(err?'⚠️ ':'<span class=\"spin\"></span>')+msg;}
 
+/* ---------- EXCEL parse ---------- */
 function buildFromExcel(buffer){
  const data=new Uint8Array(buffer);
- const workbook=XLSX.read(data,{type:'array'});
- const firstSheetName=workbook.SheetNames[0];
+ // Adicionado cellDates: true para o Excel interpretar as datas corretamente
+ const workbook=XLSX.read(data,{type:'array', cellDates: true});
+ const firstSheetName=workbook.SheetNames[0]; // Garante que pega a primeira aba
  const worksheet=workbook.Sheets[firstSheetName];
  const rows=XLSX.utils.sheet_to_json(worksheet,{header:1,defval:''});
  const rowsFiltered=rows.filter(r=>r.some(c=>c!==null&&c!==''&&c.toString().trim()));
@@ -149,7 +151,17 @@ function buildFromExcel(buffer){
  const idxTot=col('TOTAL'); const idxObs=col('OBS');
  const out=[];
  for(let r=hi+1;r<rowsFiltered.length;r++){
-   const row=rowsFiltered[r]; const dt=parseDate(row[idxDate]);
+   const row=rowsFiltered[r]; 
+   
+   // --- AJUSTE DE DATA EXCEL (INÍCIO) ---
+   let rawDate = row[idxDate];
+   if (rawDate instanceof Date) {
+     // Converte a data nativa do Excel para string ISO (AAAA-MM-DD)
+     rawDate = rawDate.toISOString().split('T')[0];
+   }
+   const dt=parseDate(rawDate);
+   // --- AJUSTE DE DATA EXCEL (FIM) ---
+
    if(!dt)continue; if(CONFIG.ANO && (+dt.slice(0,4))!==CONFIG.ANO)continue;
    const services={}; let sum=0;
    for(const h of HOURS){const k=hidx[h];const v=k!=null?num(row[k]):null;if(v&&v>0){services[h]=Math.round(v);sum+=v;}}
