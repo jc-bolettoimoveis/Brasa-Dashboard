@@ -4,8 +4,8 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Contagem de Cultos · Brasa Church</title>
-<script src="https://jsdelivr.net" crossorigin="anonymous"></script>
-<script src="chart.umd.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" crossorigin="anonymous"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.js" crossorigin="anonymous"></script>
 <script src="config.js"></script>
 <script src="fatores.js"></script>
 <style>
@@ -129,14 +129,58 @@ const fmt=n=>n==null?'':Math.round(n).toLocaleString('pt-BR');
 function cond(p,c){if(p>=0.4)return'Chuva';if(p>=0.1)return'Garoa';if(c<30)return'Sol';if(c<70)return'Parcial';return'Nublado';}
 function grp(x){return(x==='Chuva'||x==='Garoa')?'Chuva/Garoa':(x==='Nublado'?'Nublado':'Sol/Parcial');}
 
-function status(msg,err){const s=document.getElementById('status');s.className=err?'err':'';s.innerHTML=(err?'⚠️ ':'<span class=\"spin\"></span>')+msg;}
+function status(msg,err){const s=document.getElementById('status');s.className=err?'err':'';s.innerHTML=(err?'⚠️ ':'<span class="spin"></span>')+msg;}
+
+/* ---------- FUNÇÕES AUXILIARES ADICIONADAS (CORREÇÃO) ---------- */
+function norm(val) {
+  if (val == null) return '';
+  return val.toString()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Remove acentos
+    .trim()
+    .toUpperCase();
+}
+
+function num(val) {
+  if (val == null || val === '') return null;
+  if (typeof val === 'number') return val;
+  const cleaned = val.toString().replace(/[^\d.,-]/g, '').replace(',', '.');
+  const parsed = parseFloat(cleaned);
+  return isNaN(parsed) ? null : parsed;
+}
+
+function parseDate(val) {
+  if (!val) return null;
+  // Se já for objeto Date
+  if (val instanceof Date) {
+    return val.toISOString().split('T')[0];
+  }
+  // Se for número serial de data do Excel
+  if (typeof val === 'number') {
+    const date = new Date((val - 25569) * 86400 * 1000);
+    return date.toISOString().split('T')[0];
+  }
+  // Se for string no formato brasileiro (DD/MM/AAAA ou DD/MM/AA)
+  const str = val.toString().trim();
+  const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+  if (dmy) {
+    let year = dmy[3];
+    if (year.length === 2) year = '20' + year;
+    return `${year}-${dmy[2].padStart(2, '0')}-${dmy[1].padStart(2, '0')}`;
+  }
+  // Se for padrão ISO (AAAA-MM-DD)
+  const iso = str.match(/^(\d{4})[\/\-](\d{2})[\/\-](\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  
+  return null;
+}
+/* ---------------------------------------------------------------- */
 
 /* ---------- EXCEL parse ---------- */
 function buildFromExcel(buffer){
  const data=new Uint8Array(buffer);
- // Adicionado cellDates: true para o Excel interpretar as datas corretamente
  const workbook=XLSX.read(data,{type:'array', cellDates: true});
- const firstSheetName=workbook.SheetNames[0]; // Garante que pega a primeira aba
+ const firstSheetName=workbook.SheetNames[0]; 
  const worksheet=workbook.Sheets[firstSheetName];
  const rows=XLSX.utils.sheet_to_json(worksheet,{header:1,defval:''});
  const rowsFiltered=rows.filter(r=>r.some(c=>c!==null&&c!==''&&c.toString().trim()));
@@ -152,14 +196,11 @@ function buildFromExcel(buffer){
  for(let r=hi+1;r<rowsFiltered.length;r++){
    const row=rowsFiltered[r]; 
    
-   // --- AJUSTE DE DATA EXCEL (INÍCIO) ---
    let rawDate = row[idxDate];
    if (rawDate instanceof Date) {
-     // Converte a data nativa do Excel para string ISO (AAAA-MM-DD)
      rawDate = rawDate.toISOString().split('T')[0];
    }
    const dt=parseDate(rawDate);
-   // --- AJUSTE DE DATA EXCEL (FIM) ---
 
    if(!dt)continue; if(CONFIG.ANO && (+dt.slice(0,4))!==CONFIG.ANO)continue;
    const services={}; let sum=0;
@@ -223,106 +264,4 @@ function render(){
  const cc=has9.length>2?corr(has9.map(d=>d.wx['9'].temp),has9.map(d=>d.services['9'])):null;
  document.getElementById('kpis').innerHTML=[
   [fmt(grand),'Pessoas somadas ('+DATA.length+' domingos)'],[fmt(avg),'Média por domingo'],
-  [fmt(mx.total),'Maior — '+mx.label],[fmt(mn.total),'Menor — '+mn.label],
-  [cc!=null?('+'+cc.toFixed(2)).replace('.',','):'—','Corr. temp.manhã × 9h']
- ].map(k=>`<div class="kpi"><div class="v">${k[0]}</div><div class="l">${k[1]}</div></div>`).join('');
-
- const labels=DATA.map(d=>d.label);
- const pc=m=>DATA.map(d=>m==='holiday'?(d.holiday?C.gold:'#3a4048'):m==='wc'?(d.wc?C.red:'#3a4048'):m==='centro'?(d.venue==='Centro'?C.centro:'#3a4048'):(d.venue==='Centro'?C.centro:C.ember));
- const pr=m=>DATA.map(d=>m==='all'?5:((m==='holiday'&&d.holiday)||(m==='wc'&&d.wc)||(m==='centro'&&d.venue==='Centro')?7:3));
- const line=new Chart(lineChart,{type:'line',data:{labels,datasets:[{data:totals,borderColor:C.ember,borderWidth:2.5,tension:.32,fill:true,
-   backgroundColor:x=>{const g=x.chart.ctx.createLinearGradient(0,0,0,340);g.addColorStop(0,'rgba(255,106,43,.28)');g.addColorStop(1,'rgba(255,106,43,0)');return g;},
-   pointBackgroundColor:pc('all'),pointBorderColor:'#0f1113',pointRadius:pr('all'),pointHoverRadius:9}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>'Domingo '+i[0].label,label:i=>'  '+fmt(i.raw)+' pessoas',
-     afterBody:i=>{const d=DATA[i[0].dataIndex],w=d.wx['9']||{};let a=['Local: '+d.venue];if(w.temp!=null)a.push('Manhã 9h: '+ICON[w.cond]+' '+w.cond+' '+w.temp+'° (sente '+w.app+'°, 💨'+w.wind+')');
-       if(d.holiday)a.push('🎉 '+d.holiday);if(d.wc)a.push('⚽ '+d.wc);if(d.note)a.push('📝 '+d.note);return a;}}}},
-   scales:{y:{grid:{color:C.line},ticks:{callback:v=>fmt(v)}},x:{grid:{display:false}}}}});
- document.querySelectorAll('#lineCtrl .btn').forEach(b=>b.onclick=()=>{document.querySelectorAll('#lineCtrl .btn').forEach(x=>x.classList.remove('active'));b.classList.add('active');line.data.datasets[0].pointBackgroundColor=pc(b.dataset.f);line.data.datasets[0].pointRadius=pr(b.dataset.f);line.update();});
-
- const g9=avgByCond('9');
- new Chart(wx9Chart,{type:'bar',data:{labels:['☀️ Sol/Parcial','☁️ Nublado','🌧️ Chuva/Garoa'],datasets:[{data:[g9['Sol/Parcial'],g9['Nublado'],g9['Chuva/Garoa']],backgroundColor:[C.sol,C.nub,C.chuva],borderRadius:8,maxBarThickness:70}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{display:false},title:{display:true,text:'Público médio do culto das 9h',color:C.mut},tooltip:{callbacks:{label:i=>fmt(i.raw)+' pessoas'}}},scales:{y:{beginAtZero:true,grid:{color:C.line}},x:{grid:{display:false}}}}});
- const sc=has9.map(d=>({x:d.wx['9'].temp,y:d.services['9'],v:d.venue,l:d.label}));
- new Chart(scatterChart,{type:'scatter',data:{datasets:[{label:'Teatro',data:sc.filter(p=>p.v==='Teatro'),backgroundColor:C.ember,pointRadius:6},{label:'Centro',data:sc.filter(p=>p.v==='Centro'),backgroundColor:C.centro,pointRadius:6}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{position:'top'},title:{display:true,text:'Temperatura às 9h × público das 9h',color:C.mut},tooltip:{callbacks:{label:i=>i.raw.l+': '+i.raw.x+'° → '+fmt(i.raw.y)}}},scales:{y:{grid:{color:C.line}},x:{grid:{color:C.line},title:{display:true,text:'°C às 9h',color:C.mut}}}}});
- if(g9['Sol/Parcial']&&g9['Nublado']){const dif=g9['Sol/Parcial']-g9['Nublado'];
-   document.getElementById('wxCallout').innerHTML='<b>Leitura:</b> nas manhãs frias/encobertas o culto das 9h reúne ~'+fmt(g9['Nublado'])+' pessoas, contra ~'+fmt(g9['Sol/Parcial'])+' em manhãs de sol (−'+fmt(dif)+'). Os cultos da tarde/noite quase não sentem o clima.';}
-
- const sens=HOURS.map(h=>avgByCond(h));
- new Chart(sensChart,{type:'bar',data:{labels:HOURS.map(h=>h+'h'),datasets:[
-   {label:'Sol/Parcial',data:sens.map(s=>s['Sol/Parcial']||null),backgroundColor:C.sol,borderRadius:6},
-   {label:'Nublado',data:sens.map(s=>s['Nublado']||null),backgroundColor:C.nub,borderRadius:6},
-   {label:'Chuva/Garoa',data:sens.map(s=>s['Chuva/Garoa']||null),backgroundColor:C.chuva,borderRadius:6}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>i.dataset.label+': '+fmt(i.raw)}}},scales:{y:{beginAtZero:true,grid:{color:C.line},ticks:{callback:v=>fmt(v)}},x:{grid:{display:false}}}}});
-
- const tv=DATA.filter(d=>d.venue==='Teatro'),cv=DATA.filter(d=>d.venue==='Centro');
- const vl=[],vd=[],vcol=[];if(tv.length){vl.push('Teatro ('+tv.length+')');vd.push(Math.round(mean(tv.map(d=>d.total))));vcol.push(C.ember);}
- if(cv.length){vl.push('Centro ('+cv.length+')');vd.push(Math.round(mean(cv.map(d=>d.total))));vcol.push(C.centro);}
- new Chart(venueChart,{type:'bar',data:{labels:vl,datasets:[{data:vd,backgroundColor:vcol,borderRadius:8,maxBarThickness:90}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>'Média: '+fmt(i.raw)}}},scales:{y:{beginAtZero:true,grid:{color:C.line},ticks:{callback:v=>fmt(v)}},x:{grid:{display:false}}}}});
- const hAvg=HOURS.map(h=>{const a=DATA.map(d=>d.services[h]).filter(v=>v);return a.length?Math.round(mean(a)):0;});
- new Chart(hourChart,{type:'bar',data:{labels:HOURS.map(h=>h+'h'),datasets:[{data:hAvg,backgroundColor:['#ffb98a','#ff6a2b','#ff8a4d','#ffa76b','#c9541f'],borderRadius:8,maxBarThickness:70}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>'Média: '+fmt(i.raw)}}},scales:{y:{beginAtZero:true,grid:{color:C.line}},x:{grid:{display:false}}}}});
- const hc={'9':'#ffd9b0','11':'#ff6a2b','16':'#ff8a4d','18':'#ffab6e','20':'#b8481a'};
- new Chart(stackChart,{type:'bar',data:{labels,datasets:HOURS.map(h=>({label:h+'h',data:DATA.map(d=>d.services[h]||0),backgroundColor:hc[h],stack:'s'}))},
-   options:{maintainAspectRatio:false,plugins:{legend:{position:'bottom'},tooltip:{callbacks:{label:i=>i.dataset.label+': '+fmt(i.raw)}}},scales:{y:{stacked:true,beginAtZero:true,grid:{color:C.line},ticks:{callback:v=>fmt(v)}},x:{stacked:true,grid:{display:false},ticks:{maxRotation:90,minRotation:45,font:{size:9}}}}}});
- const mm={};DATA.forEach(d=>{(mm[d.mes]=mm[d.mes]||[]).push(d.total);});
- const ml=MES.filter(m=>mm[m]);
- new Chart(monthChart,{type:'bar',data:{labels:ml,datasets:[{data:ml.map(m=>Math.round(mean(mm[m]))),backgroundColor:'#ff6a2b',borderRadius:7,maxBarThickness:46}]},
-   options:{maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{callbacks:{label:i=>'Média: '+fmt(i.raw)+' ('+mm[i.label].length+' dom.)'}}},scales:{y:{beginAtZero:true,grid:{color:C.line},ticks:{callback:v=>fmt(v)}},x:{grid:{display:false}}}}});
-
- // heatmap
- let allv=[];DATA.forEach(d=>HOURS.forEach(h=>{if(d.services[h])allv.push(d.services[h]);}));
- const lo=Math.min(...allv),hi=Math.max(...allv);
- const col=v=>{if(v==null)return'background:#141619;color:#3a4048';const t=(v-lo)/(hi-lo||1);return `background:rgb(${Math.round(60+t*195)},${Math.round(40+t*90)},${Math.round(30+t*10)});color:${t>.5?'#1a0f07':'#f2efe9'};font-weight:600`;};
- let ht='<table class="ht"><thead><tr><th></th>'+DATA.map(d=>'<th>'+d.label+'</th>').join('')+'</tr></thead><tbody>';
- HOURS.forEach(h=>{ht+='<tr><td class="hlabel">'+h+'h</td>'+DATA.map(d=>{const v=d.services[h],w=d.wx[h];const tt=d.label+' '+h+'h: '+(v?fmt(v):'—')+(w&&w.temp!=null?' | '+ICON[w.cond]+' '+w.cond+' '+w.temp+'°':'');return '<td style="'+col(v)+'" title="'+tt+'">'+(v?fmt(v):'—')+'</td>';}).join('')+'</tr>';});
- ht+='<tr><td class="hlabel" style="color:var(--ember2)">Total</td>'+DATA.map(d=>'<td style="background:#20242a;color:var(--ember2);font-weight:800">'+fmt(d.total)+'</td>').join('')+'</tr></tbody></table>';
- document.getElementById('heatmap').innerHTML=ht;
-
- window._renderTable=function(f){const rows=DATA.filter(d=>f==='holiday'?d.holiday:f==='wc'?d.wc:f==='centro'?d.venue==='Centro':f==='rain'?(d.wx['9']&&['Chuva','Garoa','Nublado'].includes(d.wx['9'].cond)):true);
-  document.getElementById('fbody').innerHTML=rows.map(d=>{const w=d.wx['9']||{};
-   return `<tr><td><b>${d.label}</b><br><span style="color:var(--mut);font-size:11px">${d.mes}</span></td>
-    <td>${d.venue==='Centro'?'<span class="vpill vc">Centro</span>':'<span class="vpill vt">Teatro</span>'}</td>
-    <td class="tnum">${fmt(d.total)}</td><td>${fmt(d.services['9']||0)}</td>
-    <td class="wx">${w.temp!=null?ICON[w.cond]+' '+w.cond+' '+w.temp+'° <span style="color:var(--mut)">(sente '+w.app+'°)</span> · 💨'+w.wind+(w.precip>0?' · '+w.precip+'mm':''):'—'}</td>
-    <td>${d.holiday?'<span class="badge bg-h">🎉 '+d.holiday+'</span>':'—'}</td>
-    <td>${d.wc?'<span class="badge bg-w">⚽ '+d.wc+'</span>':'—'}</td>
-    <td style="color:#cfd4db;max-width:220px">${d.note||''}</td></tr>`;}).join('');};
- _renderTable('all');
- document.querySelectorAll('.btn[data-t]').forEach(b=>b.onclick=()=>{document.querySelectorAll('.btn[data-t]').forEach(x=>x.classList.remove('active'));b.classList.add('active');_renderTable(b.dataset.t);});
-
- // insights (dinâmicos)
- const ins=[];
- if(tv.length&&cv.length)ins.push(['🏟️ O local pesa muito','No Teatro a média foi de <span class="em">'+fmt(mean(tv.map(d=>d.total)))+'</span>/domingo; no Centro de Eventos, <span class="em">'+fmt(mean(cv.map(d=>d.total)))+'</span>. Boa parte é capacidade do local.']);
- if(g9['Sol/Parcial'])ins.push(['🌡️ Frio/nublado esvazia o 9h','9h: sol <span class="em">'+fmt(g9['Sol/Parcial'])+'</span>, chuva <span class="em">'+fmt(g9['Chuva/Garoa']||0)+'</span>, nublado <span class="em">'+fmt(g9['Nublado']||0)+'</span>.'+(cc!=null?' Correlação temp×9h = <span class="em">+'+cc.toFixed(2).replace('.',',')+'</span>.':'')]);
- const cold=has9.slice().sort((a,b)=>a.wx['9'].app-b.wx['9'].app)[0];
- if(cold)ins.push(['🥶 Manhã mais gelada','<span class="em">'+cold.label+'</span>: sensação de <span class="em">'+cold.wx['9'].app+'°C</span> às 9h com vento de '+cold.wx['9'].wind+' km/h.']);
- ins.push(['📈 Maior e menor','Maior: <span class="em">'+mx.label+' ('+fmt(mx.total)+')</span>. Menor: <span class="em">'+mn.label+' ('+fmt(mn.total)+')</span>'+(mn.wc?' — '+mn.wc:'')+'.']);
- document.getElementById('insights').innerHTML=ins.map(c=>`<div class="ins"><h3>${c[0]}</h3><p>${c[1]}</p></div>`).join('');
- document.getElementById('foot').innerHTML='Dados: planilha "BC Contagem 2026" (aba GERAL) · clima hora a hora Open-Meteo (ERA5) · fatores em fatores.js. Atualiza automaticamente ao recarregar a página.';
- document.getElementById('tag').textContent=DATA.length+' domingos · '+DATA[0].label+' a '+DATA[DATA.length-1].label;
-}
-
-async function boot(){
- try{
-  if(!CONFIG.XLS_FILE){status('Falta configurar o nome do arquivo Excel no config.js.',true);return;}
-  status('Lendo a planilha Excel local…');
-  const r=await fetch(CONFIG.XLS_FILE);
-  if(!r.ok)throw new Error('Arquivo Excel não encontrado no diretório (HTTP '+r.status+')');
-  const buffer=await r.arrayBuffer();
-  const base=buildFromExcel(buffer);
-  if(!base.length)throw new Error('Nenhuma linha válida de '+CONFIG.ANO+' encontrada.');
-  status('Buscando o clima…');
-  const wx=await loadWeather(base);
-  DATA=merge(base,wx);
-  document.getElementById('status').style.display='none';
-  document.getElementById('app').style.display='block';
-  render();
- }catch(e){status('Não consegui carregar: '+e.message,true);}
-}
-boot();
-
-</script>
-</body>
-</html>
+  [fmt(mx.total),'Maior — '+mx.label],
